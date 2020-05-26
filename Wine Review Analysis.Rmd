@@ -58,9 +58,6 @@ wine[which(wine$region_1 == ""), "region_1"] <- NA
 wine[which(wine$region_2 == ""), "region_2"] <- NA
 # Taster Name
 wine[which(wine$taster_name == ""), "taster_name"] <- NA
-# Twitter Handle - REMOVE
-colnames(wine)
-wine <- wine[,-11]
 ```
   
 ##### Remove Duplicates 
@@ -291,13 +288,15 @@ ggplot(data = wine.taster) +
 ##### Build Complete Datasets
 ```{r}
 colnames(wine)
-wine.complete <- wine[,-c(1, 3, 4, 8, 9, 11, 13)]
-  # Remove X, description, designation, region 1 and 2, title
-colnames(wine.complete)
+wine.complete <- wine[,-c(1, 2, 4, 5, 9, 10, 11, 12, 14)]
+   # Remove X, description, designation, region 1 and 2, taster name, title
+wine.complete <- wine.complete[complete.cases(wine.complete),] 
 missmap(wine.complete)
+```
 
+```{r}
 # Flavor and aroma
-wine.flavaro <- wine.complete[, c(2:3, 6:9)]
+wine.flavaro <- wine.complete[, c("points", "price", "flavors", "aromas", "color")]
 nlevels(wine.flavaro$aromas)
 summary(wine.flavaro$aromas)
 arrange(wine.aromas, desc(count))[31:40,]
@@ -311,21 +310,22 @@ flavors.keep <- c("cherry", "apple", "blackberry", "plum", "rasberry", "lemon", 
                  "tangerine", "olive", "coconut", "tomato", "prune", "raisin", "pomegranate", "nectarine", "boysenberry", "mango")
 wine.flavaro <- subset(wine.flavaro, !is.na(match(aromas, aromas.keep)))
 wine.flavaro <- subset(wine.flavaro, !is.na(match(flavors, flavors.keep)))
-wine.flavaro <- wine.flavaro[complete.cases(wine.flavaro),-3]
 wine.flavaro$aromas <- as.character(wine.flavaro$aromas)
 wine.flavaro$aromas <- as.factor(wine.flavaro$aromas)
 wine.flavaro$flavors <- as.character(wine.flavaro$flavors)
 wine.flavaro$flavors <- as.factor(wine.flavaro$flavors)
+```
 
+```{r}
 # Location
 wine.locations <- wine %>%
   filter(!is.na(country)) %>%
   group_by(country) %>%
   summarize(count = n())
 wine.locations <- arrange(wine.locations, desc(count))
-countries.keep <- c("US", "France", "Italy", "Spain", "Portugal", "Chile", "Argentina", "Austria", "Australia", "Germany")
-wine.loc <- wine[,c(2,5:6)]
-wine.loc <- subset(wine.loc, !is.na(match(country, countries.keep)))
+countries.keep <- wine.locations[1:10,1]
+wine.loc <- wine[,c("country", "points", "price")]
+wine.loc <- wine.loc[wine.loc$country %in% countries.keep$country,]
 wine.loc$country <- as.character(wine.loc$country)
 wine.loc$country <- as.factor(wine.loc$country)
 nlevels(wine.loc$country)
@@ -337,7 +337,7 @@ summary(wine.loc$country)
 Prep the DataFrame
 ```{r}
 # Make dataframe with no NAs
-wine.col <- wine[,c(5:6, 16)]
+wine.col <- wine[,c("points", "price", "color")]
 wine.col <- wine.col[complete.cases(wine.col),]
 # Split into test and train sets
 set.seed(12345)
