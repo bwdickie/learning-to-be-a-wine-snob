@@ -1,0 +1,531 @@
+---
+title: "Wine Review Analysis"
+output: html_notebook
+---
+
+##### Data Environment Set-Up
+```{r} 
+library(Amelia)
+library(tidyverse)
+library(tm)
+library(wordcloud)
+library(readr)
+library(tidytext)
+library(SnowballC)
+library(wordcloud)
+library(ggmap)
+library(maps)
+library(mapdata)
+library(tree)
+library(randomForest)
+library(gmodels)
+library(caret)
+library(pROC)
+library(cvTools)
+library(C50)
+library(mltools)
+
+
+wine.og <- read.csv("https://wine-review-dataset.s3.amazonaws.com/wine_dataset.csv")
+wine <- wine.og
+
+```
+  
+
+## Data Cleaning
+```{r}
+summary(wine)
+```
+  
+##### Replace "" with NAs
+```{r}
+# Points
+ggplot(data = wine) + geom_histogram(aes(points), binwidth = 1)
+# Price
+ggplot(data = filter(wine, price < 500)) + geom_histogram(aes(price))
+expensive.wine <-  filter(wine, price >= 500)
+  # only 104 pricey bottles - remove from wine dataset
+wine <- filter(wine, price < 500)
+# Country
+wine[which(wine$country == ""), "country"] <- NA
+# Designation
+wine[which(wine$designation == ""), "designation"] <- NA
+# Province
+wine[which(wine$province == ""), "province"] <- NA
+# Region 1
+wine[which(wine$region_1 == ""), "region_1"] <- NA
+# Region 2
+wine[which(wine$region_2 == ""), "region_2"] <- NA
+# Taster Name
+wine[which(wine$taster_name == ""), "taster_name"] <- NA
+# Twitter Handle - REMOVE
+colnames(wine)
+wine <- wine[,-11]
+```
+  
+##### Remove Duplicates 
+```{r}
+wine <- wine[!(duplicated(wine[,c("title", "winery", "variety", "designation", "country", "taster_name")])),]
+  # Removed 754 duplicated 
+```
+  
+##### Examine Missing Values
+```{r}
+missmap(wine)
+  # Region 2 - mostly NA, don't use in analysis
+  # Designation - half NA, can't impute
+  # Taster Name - half NA, can't impute
+  # Region 1 - some NAs
+```
+  
+  
+## Text Mining
+  
+##### Description Corpus
+```{r}
+# Enter each description as a work in Corpus
+wine.desc <- Corpus(VectorSource(wine$description))
+# Make all words lowercase, remove punctuation, remove stop words
+wine.desc.clean <- wine.desc %>%
+  tm_map(content_transformer(tolower)) %>%
+  tm_map(removeWords, stopwords('english')) %>%
+  tm_map(removeWords, 'wine') %>%
+  tm_map(removePunctuation) %>%
+  tm_map(removeNumbers)
+wine.desc.clean[100]$content
+wine[100, "description"]
+```
+  
+##### Most Frequent Words
+```{r}
+dtm <- DocumentTermMatrix(wine.desc.clean)
+DF <- tidy(dtm)
+names(DF) <- c('document','word','freq')
+DF <- arrange(DF, desc(freq))
+head(DF)
+# Bar Plot of dtm
+DF %>% filter(freq>3) %>% ggplot(aes(word,freq)) + geom_col() + xlab(NULL)+ coord_flip()
+# Word Cloud
+wordcloud(wine.desc.clean,
+          scale=c(5,0.5),
+          max.words=100, 
+          min.freq=4,
+          random.order=FALSE,
+          rot.per=.35,
+          use.r.layout=FALSE,
+          colors=brewer.pal(8,"Dark2"))
+```
+  
+##### Tastes & Aromas
+```{r}
+# Tastes Files
+fruit.tastes <- read.table("fruit.txt")
+fruit <- as.character(fruit.tastes$V1)
+fruit <- tolower(fruit)
+# Add flavors to wine dataset
+wine$flavors <- NA
+for(i in 1:nrow(wine)) {
+  desc <- wine.desc.clean[i]$content
+  desc.words <- strsplit(desc, " ")
+  desc.words <- unlist(desc.words)
+  for(j in 1:length(desc.words)) {
+    if(!is.na(match(desc.words[j],fruit))) {
+      wine[i, "flavors"] <- desc.words[j]
+      break
+    }
+  }
+}
+wine$flavors <- as.factor(wine$flavors)
+
+# Aromas File
+aromas <- read.table("aromas.txt")
+aroma <- as.character(aromas$V1)
+aroma <- tolower(aroma)
+# Add aromas to wine dataset
+wine$aromas <- NA
+for(i in 1:nrow(wine)) {
+  desc <- wine.desc.clean[i]$content
+  desc.words <- strsplit(desc, " ")
+  desc.words <- unlist(desc.words)
+  for(j in 1:length(desc.words)) {
+    if(!is.na(match(desc.words[j],aroma))) {
+      wine[i, "aromas"] <- desc.words[j]
+      break
+    }
+  }
+}
+wine$aromas <- as.factor(wine$aromas)
+```
+  
+  
+## Graphical Analysis
+  
+##### Wine Variety -> Color
+```{r}
+# With variety
+wine.variety <- wine %>%
+  group_by(variety) %>%
+  summarize(count = n())
+wine.variety <- arrange(wine.variety, desc(count))
+##wine.variety[41:50,]
+wine$color <- NA
+wine <- mutate(wine, color = ifelse(variety == "Pinot Noir", "red", 
+                                    ifelse(variety == "Chardonnay", "white", 
+                                           ifelse(variety == "Cabernet Sauvignon", "red",
+                                                  ifelse(variety == "Red Blend", "red", 
+                                                         ifelse(variety == "Riesling", "white", 
+                                                                ifelse(variety == "Sauvignon Blanc", "white", 
+                                                                       ifelse(variety == "Ros????", "white", 
+                                                                              ifelse(variety == "Zinfandel", "red", 
+                                                                                     ifelse(variety == "Malbec", "red", 
+                                                                                            ifelse(variety == "Sangiovese", "red",
+                                                                                                   ifelse(variety == "Nebbiolo", "red",
+                                                                                                          ifelse(variety == "Portuguese Red", "red", 
+                                    ifelse(variety == "White Blend", "white", 
+                                           ifelse(variety == "Sparkling Blend", "white",
+                                                  ifelse(variety == "Tempranillo", "red",
+                                                         ifelse(variety == "Rh????ne-style Red Blend", "red", 
+                                                                ifelse(variety == "Pinot Gris", "white", 
+                                                                       ifelse(variety == "Cabernet Franc", "red",
+                                                                              ifelse(variety == "Gr????ner Veltliner", "white",
+                                                                                     ifelse(variety == "Champagne Blend", "white",
+                                                                                            ifelse(variety == "Pinot Grigio", "white", 
+                                    ifelse(variety == "Viognier", "white", 
+                                           ifelse(variety == "Portuguese White", "white", 
+                                                  ifelse(variety == "Gew????rztraminer", "white",
+                                                         ifelse(variety == "Shiraz", "red", 
+                                                                ifelse(variety == "Gamay", "red",
+                                                                       ifelse(variety == "Petite Sirah", "red", 
+ifelse(variety == "Bordeaux-style White Blend", "white",
+       ifelse(variety == "Grenache", "red", 
+              ifelse(variety == "Tempranillo Blend", "red",
+                    ifelse(variety == "Barbera", "red",
+                            ifelse(variety == "Sangiovese Grosso", "red",
+                                   ifelse(variety == "Glera", "white",
+                                          ifelse(variety == "Carmen????re", "red", 
+                                                 ifelse(variety == "Chenin Blanc", "white",
+                                                        ifelse(variety == "Corvina, Rondinella, Molinara", "red",
+                                                               ifelse(variety == "Port", "red",
+ifelse(variety == "Albari????o", "white",
+       ifelse(variety == "Rh????ne-style White Blend", "white",
+              ifelse(variety == "Pinot Blanc", "white",
+                     ifelse(variety == "Garnacha", "red",
+                            ifelse(variety == "Moscato", "white",
+                                   ifelse(variety == "Nero d'Avola", "red",
+                                          ifelse(variety == "Sauvignon", "white",
+                                                 ifelse(variety == "Verdejo", "white",
+                                                        ifelse(variety == "Petit Verdot", "red",
+                                                               ifelse(variety == "Aglianco", "red",  NA))))))))))))))))))))))))))))))))))))))))))))))))
+
+wine$color <- as.factor(wine$color)
+ggplot(data=wine %>% group_by(color) %>% summarize(count = n()),
+       aes(x=color, y=count, fill=color)) +
+  geom_col()
+```
+  
+```{r}
+# Scatter Plot
+ggplot(data = filter(wine, !is.na(color))) + 
+  geom_point(mapping = aes(x = price, y = points, color = color)) +
+  geom_smooth(mapping = aes(x = price, y = points)) + 
+  facet_wrap(~color)
+```
+  
+```{r}
+# Histogram
+priceRW <- ggplot(data = filter(wine, !is.na(color))) + 
+  geom_histogram(mapping = aes(price, fill = color, color = "grey"), position = "identity", alpha = 1/2) + 
+  ylab("frequency") + ggtitle("Comparison of Price for White and Red Wine")
+priceRW + scale_fill_manual(values = c("red", "white")) + theme(legend.title = element_blank())
+pointsRW <- ggplot(data = filter(wine, !is.na(color))) + 
+  geom_histogram(mapping = aes(points, fill = color, color = "grey"), position = "identity", alpha = 1/2, binwidth = 1) + 
+  ylab("frequency") + ggtitle("Comparison of Points for White and Red Wine")
+pointsRW + scale_fill_manual(values = c("red", "white")) + theme(legend.title = element_blank())
+```
+  
+##### Taste & Aroma
+```{r}
+# Flavor
+wine.flavors <- wine %>%
+  filter(!is.na(flavors)) %>%
+  filter(!is.na(color)) %>%
+  group_by(flavors) %>%
+  summarize(count = n(),
+            white.count = sum(ifelse(color == "white", 1, 0)),
+            red.count = sum(ifelse(color == "red", 1, 0)))
+ggplot(data = filter(wine.flavors, count > 1500)) + 
+  geom_col(aes(x = flavors, y = count,
+               fill = ifelse(red.count > white.count, "red", "white"))) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  ylab("frequency") + labs(fill="Most Common Color") + ggtitle("Most Common Fruit Flavors")
+```
+  
+```{r}
+# Aroma
+wine.aromas <- wine %>%
+  filter(!is.na(aromas)) %>%
+  group_by(aromas) %>%
+  summarize(count = n())
+ggplot(data = filter(wine.aromas, count > 1500)) + 
+  geom_col(aes(x = aromas, y = count)) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  ylab("frequency") + labs(fill="Most Common Color") + ggtitle("Most Common Aromas")
+```
+  
+##### Taster Name
+```{r}
+wine.taster <- wine %>%
+  filter(!is.na(taster_name)) %>%
+  group_by(taster_name) %>%
+  summarize(frequency = n(),
+            avg_points = mean(points))
+ggplot(data = wine.taster) + 
+  geom_col(aes(x = taster_name, y = frequency, fill = avg_points)) + 
+  theme(axis.text.x = element_text(angle = 60, hjust = 1)) + 
+  ggtitle("Frequency and Average Points for Each Taster")
+```
+  
+  
+## Classification Models
+  
+##### Build Complete Datasets
+```{r}
+colnames(wine)
+wine.complete <- wine[,-c(1, 3, 4, 8, 9, 11, 13)]
+  # Remove X, description, designation, region 1 and 2, title
+colnames(wine.complete)
+missmap(wine.complete)
+
+# Flavor and aroma
+wine.flavaro <- wine.complete[, c(2:3, 6:9)]
+nlevels(wine.flavaro$aromas)
+summary(wine.flavaro$aromas)
+arrange(wine.aromas, desc(count))[31:40,]
+aromas.keep <- c("oak", "sweet", "pepper", "vanilla", "chocolate", "spicy", "earthy", "mineral", "herb", "wood",
+                 "leather", "floral", "smoky", "toast", "honey", "tobacco", "rose", "coffee",
+                 "violet", "almond", "mint", "caramel", "sugar", "tea", "meaty", "grassy", "bacon", "buttery",
+                 "burnt", "pine", "rubber")
+arrange(wine.flavors, desc(count))[21:30,]
+flavors.keep <- c("cherry", "apple", "blackberry", "plum", "rasberry", "lemon", "peach", "pear", "strawberry", "orange",
+                 "currant", "pineapple", "grapefruit", "lime", "apricot", "cranberry", "melon", "blueberry", "grape",
+                 "tangerine", "olive", "coconut", "tomato", "prune", "raisin", "pomegranate", "nectarine", "boysenberry", "mango")
+wine.flavaro <- subset(wine.flavaro, !is.na(match(aromas, aromas.keep)))
+wine.flavaro <- subset(wine.flavaro, !is.na(match(flavors, flavors.keep)))
+wine.flavaro <- wine.flavaro[complete.cases(wine.flavaro),-3]
+wine.flavaro$aromas <- as.character(wine.flavaro$aromas)
+wine.flavaro$aromas <- as.factor(wine.flavaro$aromas)
+wine.flavaro$flavors <- as.character(wine.flavaro$flavors)
+wine.flavaro$flavors <- as.factor(wine.flavaro$flavors)
+
+# Location
+wine.locations <- wine %>%
+  filter(!is.na(country)) %>%
+  group_by(country) %>%
+  summarize(count = n())
+wine.locations <- arrange(wine.locations, desc(count))
+countries.keep <- c("US", "France", "Italy", "Spain", "Portugal", "Chile", "Argentina", "Austria", "Australia", "Germany")
+wine.loc <- wine[,c(2,5:6)]
+wine.loc <- subset(wine.loc, !is.na(match(country, countries.keep)))
+wine.loc$country <- as.character(wine.loc$country)
+wine.loc$country <- as.factor(wine.loc$country)
+nlevels(wine.loc$country)
+summary(wine.loc$country)
+```
+  
+#### Color Prediction Random Forest
+  
+Prep the DataFrame
+```{r}
+# Make dataframe with no NAs
+wine.col <- wine[,c(5:6, 16)]
+wine.col <- wine.col[complete.cases(wine.col),]
+# Split into test and train sets
+set.seed(12345)
+wine.col.rand <- wine.col[order(runif(nrow(wine.col))), ]
+wine.col.train <- wine.col.rand[1:round(nrow(wine.col.rand)*(2/3)), ]
+wine.col.test  <- drop_na(wine.col.rand[round(nrow(wine.col)*(2/3))+1:nrow(wine.col.rand), ])
+```
+  
+Visualize One Decision Tree
+```{r}
+# Build simple decision tree
+color.tree <- C5.0(wine.col.train[,-3], wine.col.train$color)
+plot(color.tree)
+```
+  
+Random Forest Model
+```{r}
+color.rf <- randomForest(wine.col.train[,-3], wine.col.train$color, ntree = 500, mtry = 2)
+
+# Variable Importance
+varImpPlot(color.rf,type=2, main="Variable Importance in Predicting Color")
+
+# Model Performance
+p.color <- predict(color.rf, wine.col.test[,-3])
+CrossTable(wine.col.test$color, p.color,
+           prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE,
+           dnn = c('actual color', 'predicted color'))
+```
+  
+Random Forest Model with Cross Validation
+```{r}
+# With CV
+k <- 8
+folds <- cvFolds(NROW(wine.col.rand), K=k)
+wine.col.rand$holdoutpred <- rep(0,nrow(wine.col.rand))
+for(i in 1:k){
+  wine.col.train.cv <- wine.col.rand[folds$subsets[folds$which != i], ]
+  wine.col.test.cv <- wine.col.rand[folds$subsets[folds$which == i], ]
+  
+  color.tree.cv <- C5.0(wine.col.train.cv[,-3], wine.col.train.cv$color)
+  p.color.cv <- predict(color.tree.cv, wine.col.test.cv[,-3])
+  
+  wine.col.rand[folds$subsets[folds$which == i], ]$holdoutpred <- p.color.cv
+}
+levels(wine.col.rand$holdoutpred) <- c("red", "white")
+table(wine.col.rand$holdoutpred,wine.col.rand$color)
+
+# Model Performance
+CrossTable(wine.col.rand$color, wine.col.rand$holdoutpred,
+           prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE,
+           dnn = c('actual color', 'predicted color'))
+```
+  
+### Flavor & Aroma Linear Model
+  
+One-Hot Encoding
+```{r}
+contrasts(wine.flavaro$flavors)
+contrasts(wine.flavaro$aromas)
+contrasts(wine.flavaro$color)
+contrasts(wine.flavaro$color)<-matrix(c(1, 0),nrow=2)
+colnames(contrasts(wine.flavaro$color)) <-"red"
+```
+  
+Predicting Price
+```{r}
+lm.flavaro.price <- lm(price ~ ., data = wine.flavaro)
+summary(lm.flavaro.price)
+lm.flavaro.price.step <- step(lm.flavaro.price, trace = F)
+summary(lm.flavaro.price.step)
+```
+  
+Predicting Points
+```{r}
+lm.flavaro.points <- lm(points ~ ., data = wine.flavaro)
+summary(lm.flavaro.points)
+lm.flavaro.points.step <- step(lm.flavaro.points, trace = F)
+summary(lm.flavaro.points.step)
+```
+  
+Linear Regression Model with Cross Validation
+```{r}
+# With CV
+set.seed(12345)
+wine.flavaro.rand <- wine.flavaro[order(runif(25597)), ]
+k <- 10
+folds <- cvFolds(NROW(wine.flavaro.rand), K=k)
+pmse.price.result<-rep(0,k)
+pmse.points.result<-rep(0,k)
+for (i in c(1:k)){
+  # generate training sets and test sets from original data:
+  wine.fa.train.cv <- wine.flavaro.rand[folds$subsets[folds$which != i], ]
+  wine.fa.test.cv <- wine.flavaro.rand[folds$subsets[folds$which == i], ]
+  
+  # Build model with train set:
+  lm.fa.price.cv <- lm(price ~ ., data = wine.fa.train.cv)
+  lm.fa.points.cv <- lm(points ~ ., data = wine.fa.train.cv)
+  
+  # First, how to predict with lm models:
+  price.pred<-predict(lm.fa.price.cv,newdata=wine.fa.test.cv) 
+  points.pred<-predict(lm.fa.points.cv,newdata=wine.fa.test.cv) 
+  
+  # Next, compute PMSE:
+  pmse.price<-mse(price.pred, wine.fa.test.cv$price)
+  pmse.points<-mse(points.pred, wine.fa.test.cv$points)
+  
+  # Add the PMSE for this run into your vector to stor PMSE
+  pmse.price.result[i]<-pmse.price
+  pmse.points.result[i]<-pmse.points
+}
+
+plot(pmse.price.result,type='b',col='blue',xlab="Index", ylab="PMSE")
+abline(mean(pmse.price.result), 0, col='black',xlab="Index", ylab="PMSE")
+title(main="PMSE of Price Model")
+
+plot(pmse.points.result,type='b',col='blue',xlab="Index", ylab="PMSE")
+abline(mean(pmse.points.result), 0, col='black',xlab="Index", ylab="PMSE")
+title(main="PMSE of Points Model")
+```
+  
+#### Location Linear Model
+  
+Country One-Hot Encoding
+```{r}
+contrasts(wine.loc$country)
+contrasts(wine.loc$country)<-matrix(c(1,0,0,0,0,0,0,0,0,0, 
+                                      0,1,0,0,0,0,0,0,0,0,
+                                      0,0,1,0,0,0,0,0,0,0, 
+                                      0,0,0,1,0,0,0,0,0,0,  
+                                      0,0,0,0,1,0,0,0,0,0,
+                                      0,0,0,0,0,1,0,0,0,0,
+                                      0,0,0,0,0,0,1,0,0,0,
+                                      0,0,0,0,0,0,0,1,0,0,
+                                      0,0,0,0,0,0,0,0,1,0,
+                                      0,0,0,0,0,0,0,0,0,0),nrow=10) # changing value of columns
+colnames(contrasts(wine.loc$country)) <-matrix(c("Argentina","Australia","Austria","Chile","France", "Germany", "Italy", "Portugal", "Spain"),ncol=9) # changing titles of columns 
+```
+  
+Predicting Price
+```{r}
+lm.loc.price <- lm(price ~ ., data = wine.loc)
+summary(lm.loc.price)
+```
+  
+Predicting Points
+```{r}
+lm.loc.points <- lm(points ~ ., data = wine.loc)
+summary(lm.loc.points)
+```
+  
+Linear Regression Model with Cross Validation
+```{r}
+# With CV
+set.seed(12345)
+wine.loc.rand <- wine.loc[order(runif(106097)), ]
+k <- 20
+folds <- cvFolds(NROW(wine.loc.rand), K=k)
+pmse.price.result<-rep(0,(k))
+pmse.points.result<-rep(0,(k))
+for (i in c(1:k)){
+  # generate training sets and test sets from original data:
+  wine.loc.train.cv <- wine.loc.rand[folds$subsets[folds$which != i], ]
+  wine.loc.test.cv <- wine.loc.rand[folds$subsets[folds$which == i], ]
+  
+  # Build model with train set:
+  lm.loc.price.cv <- lm(price ~ ., data = wine.loc.train.cv)
+  lm.loc.points.cv <- lm(points ~ ., data = wine.loc.train.cv)
+  
+  # First, how to predict with lm models:
+  price.pred<-predict(lm.loc.price.cv,newdata=wine.loc.test.cv) 
+  points.pred<-predict(lm.loc.points.cv,newdata=wine.loc.test.cv) 
+  
+  # Next, compute PMSE:
+  pmse.price<-mse(price.pred, wine.loc.test.cv$price)
+  pmse.points<-mse(points.pred, wine.loc.test.cv$points)
+  
+  # Add the PMSE for this run into your vector to stor PMSE
+  pmse.price.result[i]<-pmse.price
+  pmse.points.result[i]<-pmse.points
+}
+
+plot(pmse.price.result,type='b',col='blue',xlab="Index", ylab="PMSE")
+abline(mean(pmse.price.result), 0, col='black',xlab="Index", ylab="PMSE")
+title(main="PMSE of Price Model")
+
+plot(pmse.points.result,type='b',col='blue',xlab="Index", ylab="PMSE")
+abline(mean(pmse.points.result), 0, col='black',xlab="Index", ylab="PMSE")
+title(main="PMSE of Points Model")
+```
+
+
